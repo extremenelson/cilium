@@ -318,7 +318,7 @@ func handleCreateContainer(id string, retry bool) {
 		// attributes with new attributes set on endpoint
 		endpointmanager.UpdateReferences(ep)
 
-		ep.UpdateLabels(workloads.Owner(), identityLabels, informationLabels)
+		ep.UpdateLabels(workloads.Owner(), identityLabels, informationLabels, labels.Labels{})
 		return
 	}
 

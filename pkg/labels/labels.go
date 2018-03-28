@@ -76,6 +76,18 @@ func (o *OpLabels) IdentityLabels() Labels {
 	return enabled
 }
 
+// InfoLabels returns map of labels that are note used when determining a
+// security identity.
+func (o *OpLabels) InfoLabels() Labels {
+	enabled := make(Labels, len(o.OrchestrationInfo))
+
+	for k, v := range o.OrchestrationInfo {
+		enabled[k] = v
+	}
+
+	return enabled
+}
+
 // AllLabels returns all Labels within the provided OpLabels.
 func (o *OpLabels) AllLabels() Labels {
 	all := make(Labels, len(o.Custom)+len(o.OrchestrationInfo)+len(o.OrchestrationIdentity)+len(o.Disabled))
@@ -99,16 +111,16 @@ func (o *OpLabels) AllLabels() Labels {
 }
 
 // NewOplabelsFromModel creates new label from the model.
-func NewOplabelsFromModel(base *models.LabelConfiguration) *OpLabels {
+func NewOplabelsFromModel(base *models.LabelConfigurationStatus) *OpLabels {
 	if base == nil {
 		return nil
 	}
 
 	return &OpLabels{
-		Custom:                NewLabelsFromModel(base.Custom),
-		Disabled:              NewLabelsFromModel(base.Disabled),
-		OrchestrationIdentity: NewLabelsFromModel(base.OrchestrationIdentity),
-		OrchestrationInfo:     NewLabelsFromModel(base.OrchestrationInfo),
+		Custom:                NewLabelsFromModel(base.Realized.User),
+		Disabled:              NewLabelsFromModel(base.Realized.Disabled),
+		OrchestrationIdentity: NewLabelsFromModel(base.SecurityRelevant),
+		OrchestrationInfo:     NewLabelsFromModel(base.Derived),
 	}
 }
 

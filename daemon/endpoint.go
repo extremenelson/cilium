@@ -160,15 +160,15 @@ func (d *Daemon) createEndpoint(epTemplate *models.EndpointChangeRequest, id str
 		return PutEndpointIDFailedCode, err
 	}
 
-	add := labels.NewLabelsFromModel(lbls)
+	idLbls := labels.NewLabelsFromModel(lbls)
 
-	if len(add) > 0 {
-		code, errLabelsAdd := d.updateEndpointLabels(id, add, labels.Labels{})
+	if len(idLbls) > 0 {
+		code, errLabelsAdd := d.updateEndpointLabels(id, idLbls, labels.Labels{})
 		if errLabelsAdd != nil {
 			// XXX: Why should the endpoint remain in this case?
 			log.WithFields(logrus.Fields{
 				logfields.EndpointID:              id,
-				logfields.IdentityLabels:          logfields.Repr(add),
+				logfields.IdentityLabels:          logfields.Repr(idLbls),
 				logfields.IdentityLabels + ".bad": errLabelsAdd,
 			}).Error("Could not add labels while creating an ep due to bad labels")
 			return code, errLabelsAdd
@@ -564,11 +564,18 @@ func (h *getEndpointIDLabels) Handle(params GetEndpointIDLabelsParams) middlewar
 	}
 
 	ep.Mutex.RLock()
+	spec := &models.LabelConfigurationSpec{
+		User:     ep.OpLabels.Custom.GetModel(),
+		Disabled: ep.OpLabels.Disabled.GetModel(),
+	}
+
 	cfg := models.LabelConfiguration{
-		Disabled:              ep.OpLabels.Disabled.GetModel(),
-		Custom:                ep.OpLabels.Custom.GetModel(),
-		OrchestrationIdentity: ep.OpLabels.OrchestrationIdentity.GetModel(),
-		OrchestrationInfo:     ep.OpLabels.OrchestrationInfo.GetModel(),
+		Spec: spec,
+		Status: &models.LabelConfigurationStatus{
+			Realized:         spec,
+			SecurityRelevant: ep.OpLabels.OrchestrationIdentity.GetModel(),
+			Derived:          ep.OpLabels.OrchestrationInfo.GetModel(),
+		},
 	}
 	ep.Mutex.RUnlock()
 
@@ -619,14 +626,13 @@ func (h *getEndpointIDHealthz) Handle(params GetEndpointIDHealthzParams) middlew
 	}
 }
 
-func checkLabels(add, del labels.Labels) (addLabels, delLabels labels.Labels, ok bool) {
-	addLabels, _ = labels.FilterLabels(add)
-	delLabels, _ = labels.FilterLabels(del)
+func checkLabels(lblsRaw labels.Labels) (lbls labels.Labels, ok bool) {
+	lbls, _ = labels.FilterLabels(lblsRaw)
 
-	if len(addLabels) == 0 && len(delLabels) == 0 {
-		return nil, nil, false
+	if len(lbls) == 0 {
+		return nil, false
 	}
-	return addLabels, delLabels, true
+	return lbls, true
 }
 
 // updateEndpointLabels add and deletes the given labels on given endpoint ID.
@@ -636,9 +642,9 @@ func checkLabels(add, del labels.Labels) (addLabels, delLabels labels.Labels, ok
 // label is set on both `add` and `del`, that specific label will exist in the
 // endpoint's labels.
 // Returns an HTTP response code and an error msg (or nil on success).
-func (d *Daemon) updateEndpointLabels(id string, add, del labels.Labels) (int, error) {
-	addLabels, delLabels, ok := checkLabels(add, del)
-	if !ok {
+func (d *Daemon) updateEndpointLabels(id string, user, disabled labels.Labels) (int, error) {
+	userIDLabels, okUser := checkLabels(user)
+	if !okUser {
 		return 0, nil
 	}
 
@@ -647,27 +653,28 @@ func (d *Daemon) updateEndpointLabels(id string, add, del labels.Labels) (int, e
 		return GetEndpointIDInvalidCode, err
 	}
 	if ep == nil {
-		return PutEndpointIDLabelsNotFoundCode, fmt.Errorf("Endpoint ID %s not found", id)
+		return PatchEndpointIDLabelsNotFoundCode, fmt.Errorf("Endpoint ID %s not found", id)
 	}
 
-	if err := ep.ModifyIdentityLabels(d, addLabels, delLabels); err != nil {
-		return PutEndpointIDLabelsNotFoundCode, err
-	}
+	ep.Mutex.RLock()
+	infoLabels := ep.OpLabels.InfoLabels()
+	ep.Mutex.RLock()
 
-	return PutEndpointIDLabelsOKCode, nil
+	ep.UpdateLabels(d, userIDLabels, infoLabels, disabled)
+
+	return PatchEndpointIDLabelsOKCode, nil
 }
 
 // updateEndpointLabelsFromAPI is the same as updateEndpointLabels(), but also
 // performs checks for whether the endpoint may be modified by an API call.
-func (d *Daemon) updateEndpointLabelsFromAPI(id string, add, del labels.Labels) (int, error) {
-	addLabels, delLabels, ok := checkLabels(add, del)
-	if !ok {
+func (d *Daemon) updateEndpointLabelsFromAPI(id string, user, disabled labels.Labels) (int, error) {
+	userIDLabels, okUser := checkLabels(user)
+	if !okUser {
 		return 0, nil
 	}
-	if lbls := addLabels.FindReserved(); lbls != nil {
-		return PutEndpointIDLabelsUpdateFailedCode, fmt.Errorf("Not allowed to add reserved labels: %s", lbls)
-	} else if lbls := delLabels.FindReserved(); lbls != nil {
-		return PutEndpointIDLabelsUpdateFailedCode, fmt.Errorf("Not allowed to delete reserved labels: %s", lbls)
+
+	if lbls := userIDLabels.FindReserved(); lbls != nil {
+		return PatchEndpointIDLabelsUpdateFailedCode, fmt.Errorf("Not allowed to add reserved labels: %s", lbls)
 	}
 
 	ep, err := endpointmanager.Lookup(id)
@@ -675,40 +682,42 @@ func (d *Daemon) updateEndpointLabelsFromAPI(id string, add, del labels.Labels) 
 		return GetEndpointIDInvalidCode, err
 	}
 	if ep == nil {
-		return PutEndpointIDLabelsNotFoundCode, fmt.Errorf("Endpoint ID %s not found", id)
+		return PatchEndpointIDLabelsNotFoundCode, fmt.Errorf("Endpoint ID %s not found", id)
 	}
 	if err = endpoint.APICanModify(ep); err != nil {
-		return PutEndpointIDInvalidCode, err
+		return PatchEndpointIDInvalidCode, err
 	}
 
-	if err := ep.ModifyIdentityLabels(d, addLabels, delLabels); err != nil {
-		return PutEndpointIDLabelsNotFoundCode, err
-	}
+	ep.Mutex.RLock()
+	infoLabels := ep.OpLabels.InfoLabels()
+	ep.Mutex.RLock()
 
-	return PutEndpointIDLabelsOKCode, nil
+	ep.UpdateLabels(d, userIDLabels, infoLabels, disabled)
+
+	return PatchEndpointIDLabelsOKCode, nil
 }
 
 type putEndpointIDLabels struct {
 	daemon *Daemon
 }
 
-func NewPutEndpointIDLabelsHandler(d *Daemon) PutEndpointIDLabelsHandler {
+func NewPatchEndpointIDLabelsHandler(d *Daemon) PatchEndpointIDLabelsHandler {
 	return &putEndpointIDLabels{daemon: d}
 }
 
-func (h *putEndpointIDLabels) Handle(params PutEndpointIDLabelsParams) middleware.Responder {
-	log.WithField(logfields.Params, logfields.Repr(params)).Debug("PUT /endpoint/{id}/labels request")
+func (h *putEndpointIDLabels) Handle(params PatchEndpointIDLabelsParams) middleware.Responder {
+	log.WithField(logfields.Params, logfields.Repr(params)).Debug("PATCH /endpoint/{id}/labels request")
 
 	d := h.daemon
-	mod := params.Configuration
-	add := labels.NewLabelsFromModel(mod.Add)
-	del := labels.NewLabelsFromModel(mod.Delete)
+	lbls := params.Configuration
+	user := labels.NewLabelsFromModel(lbls.User)
+	disabled := labels.NewLabelsFromModel(lbls.Disabled)
 
-	code, err := d.updateEndpointLabelsFromAPI(params.ID, add, del)
+	code, err := d.updateEndpointLabelsFromAPI(params.ID, user, disabled)
 	if err != nil {
 		return apierror.Error(code, err)
 	}
-	return NewPutEndpointIDLabelsOK()
+	return NewPatchEndpointIDLabelsOK()
 }
 
 // OnIPIdentityCacheChange is called whenever there is a change of state in the

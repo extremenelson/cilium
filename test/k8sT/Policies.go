@@ -437,7 +437,7 @@ var _ = Describe("K8sValidatedPolicyTest", func() {
 
 			epsWithEgress := 0
 			for _, ep := range epList {
-				for _, lbls := range ep.Labels.OrchestrationIdentity {
+				for _, lbls := range ep.Labels.Status.SecurityRelevant {
 					if lbls == "k8s:io.kubernetes.pod.namespace="+namespace {
 						switch swag.StringValue(ep.PolicyEnabled) {
 						case models.EndpointPolicyEnabledBoth, models.EndpointPolicyEnabledEgress:

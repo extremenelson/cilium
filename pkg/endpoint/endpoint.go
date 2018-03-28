@@ -794,22 +794,30 @@ func (e *Endpoint) GetModelRLocked() *models.Endpoint {
 	e.proxyStatisticsMutex.RUnlock()
 	sortProxyStats(proxyStats)
 
-	mdl := &models.Endpoint{
-		ID:               int64(e.ID),
-		Configuration:    e.Opts.GetModel(),
-		ContainerID:      e.DockerID,
-		ContainerName:    e.ContainerName,
-		DockerEndpointID: e.DockerEndpointID,
-		DockerNetworkID:  e.DockerNetworkID,
-		Identity:         e.SecurityIdentity.GetModel(),
-		InterfaceIndex:   int64(e.IfIndex),
-		InterfaceName:    e.IfName,
-		Labels: &models.LabelConfiguration{
-			Custom:                e.OpLabels.Custom.GetModel(),
-			OrchestrationIdentity: e.OpLabels.OrchestrationIdentity.GetModel(),
-			OrchestrationInfo:     e.OpLabels.OrchestrationInfo.GetModel(),
-			Disabled:              e.OpLabels.Disabled.GetModel(),
+	lblSpec := &models.LabelConfigurationSpec{
+		User:     e.OpLabels.Custom.GetModel(),
+		Disabled: e.OpLabels.Disabled.GetModel(),
+	}
+	lblMdl := &models.LabelConfiguration{
+		Spec: lblSpec,
+		Status: &models.LabelConfigurationStatus{
+			Realized:         lblSpec,
+			SecurityRelevant: e.OpLabels.OrchestrationIdentity.GetModel(),
+			Derived:          e.OpLabels.OrchestrationInfo.GetModel(),
 		},
+	}
+
+	mdl := &models.Endpoint{
+		ID:                  int64(e.ID),
+		Configuration:       e.Opts.GetModel(),
+		ContainerID:         e.DockerID,
+		ContainerName:       e.ContainerName,
+		DockerEndpointID:    e.DockerEndpointID,
+		DockerNetworkID:     e.DockerNetworkID,
+		Identity:            e.SecurityIdentity.GetModel(),
+		InterfaceIndex:      int64(e.IfIndex),
+		InterfaceName:       e.IfName,
+		Labels:              lblMdl,
 		Mac:                 e.LXCMAC.String(),
 		HostMac:             e.NodeMAC.String(),
 		PodName:             e.GetK8sNamespaceAndPodNameLocked(),
@@ -830,10 +838,10 @@ func (e *Endpoint) GetModelRLocked() *models.Endpoint {
 
 	// Sort these slices since they come out in random orders. This allows
 	// reflect.DeepEqual to succeed.
-	sort.StringSlice(mdl.Labels.Custom).Sort()
-	sort.StringSlice(mdl.Labels.Disabled).Sort()
-	sort.StringSlice(mdl.Labels.OrchestrationIdentity).Sort()
-	sort.StringSlice(mdl.Labels.OrchestrationInfo).Sort()
+	sort.StringSlice(mdl.Labels.Spec.User).Sort()     // also sorts .Status.Realized.User
+	sort.StringSlice(mdl.Labels.Spec.Disabled).Sort() // also sorts .Status.Realized.Disabled
+	sort.StringSlice(mdl.Labels.Status.SecurityRelevant).Sort()
+	sort.StringSlice(mdl.Labels.Status.Derived).Sort()
 	sort.Slice(mdl.Controllers, func(i, j int) bool { return mdl.Controllers[i].Name < mdl.Controllers[j].Name })
 	return mdl
 }
@@ -1632,6 +1640,16 @@ func (e *Endpoint) replaceInformationLabels(l pkgLabels.Labels) {
 	e.Mutex.Unlock()
 }
 
+func (e *Endpoint) replaceDisabledLabels(l pkgLabels.Labels) {
+	e.Mutex.Lock()
+	for k, v := range l {
+		tmp := v.DeepCopy()
+		e.getLogger().WithField(logfields.Labels, logfields.Repr(tmp)).Debug("Assigning orchestration information label")
+		e.OpLabels.Disabled[k] = tmp
+	}
+	e.Mutex.Unlock()
+}
+
 // replaceIdentityLabels replaces the identity labels of an endpoint. If a net
 // changed occurred, the identityRevision is bumped and return, otherwise 0 is
 // returned.
@@ -2155,7 +2173,7 @@ func (e *Endpoint) ModifyIdentityLabels(owner Owner, addLabels, delLabels labels
 // If a net label changed was performed, the endpoint will receive a new
 // identity and will be regenerated. Both of these operations will happen in
 // the background.
-func (e *Endpoint) UpdateLabels(owner Owner, identityLabels, infoLabels labels.Labels) {
+func (e *Endpoint) UpdateLabels(owner Owner, identityLabels, infoLabels, disabledLabels labels.Labels) {
 	log.WithFields(logrus.Fields{
 		logfields.ContainerID:    e.GetShortContainerID(),
 		logfields.EndpointID:     e.StringID(),
@@ -2164,6 +2182,7 @@ func (e *Endpoint) UpdateLabels(owner Owner, identityLabels, infoLabels labels.L
 	}).Debug("Refreshing labels of endpoint")
 
 	e.replaceInformationLabels(infoLabels)
+	e.replaceDisabledLabels(disabledLabels)
 
 	// replace identity labels and update the identity if labels have changed
 	if rev := e.replaceIdentityLabels(identityLabels); rev != 0 {
