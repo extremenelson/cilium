@@ -20,11 +20,14 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"text/tabwriter"
 
+	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/identity"
+	"github.com/cilium/cilium/pkg/option"
 
 	"github.com/spf13/cobra"
 )
@@ -184,4 +187,23 @@ func expandNestedJSON(result bytes.Buffer) (bytes.Buffer, error) {
 	}
 
 	return result, nil
+}
+
+// dumpConfig pretty prints boolean options
+func dumpConfig(Opts map[string]string) {
+	opts := []string{}
+	for k := range Opts {
+		opts = append(opts, k)
+	}
+	sort.Strings(opts)
+
+	for _, k := range opts {
+		if enabled, err := option.NormalizeBool(Opts[k]); err != nil {
+			Fatalf("Invalid option answer %s: %s", Opts[k], err)
+		} else if enabled {
+			fmt.Printf("%-24s %s\n", k, common.Green("Enabled"))
+		} else {
+			fmt.Printf("%-24s %s\n", k, common.Red("Disabled"))
+		}
+	}
 }

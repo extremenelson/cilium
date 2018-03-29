@@ -98,7 +98,7 @@ func (s *SSHMeta) GetEndpointMutableConfigurationOption(endpointID, optionName s
 	}
 
 	// Endpoint currently only has mutable options.
-	configurationOptionValue, configOptionExists := endpointModel.Configuration.Mutable[optionName]
+	configurationOptionValue, configOptionExists := endpointModel.Configuration.Options[optionName]
 	if !configOptionExists {
 		return "", fmt.Errorf("provided configuration option %s does not exist in endpoint %s configuration", optionName, endpointID)
 	}
