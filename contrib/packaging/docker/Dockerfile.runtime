@@ -1,7 +1,7 @@
 #
 # Cilium runtime base image
 #
-FROM ubuntu:16.10 as runtime-base
+FROM ubuntu:17.10 as runtime-base
 RUN apt-get update && \
 #
 # Prepackaged Cilium runtime dependencies
@@ -22,7 +22,7 @@ RUN \
 #
 apt-get install -y --no-install-recommends make git curl ca-certificates xz-utils \
 # Additional iproute2 build dependencies
-  gcc git pkg-config bison flex && \
+  gcc git pkg-config bison flex build-essential && \
 #
 # clang-3.8.1
 #
