@@ -29,7 +29,8 @@ import (
 var log = logging.DefaultLogger
 
 const (
-	MapName = "cilium_cidr_"
+	MapName    = "cilium_cidr_"
+	MaxEntries = 16384
 )
 
 // CIDRMap refers to an LPM trie map at 'path'.
