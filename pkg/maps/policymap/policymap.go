@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	MapName = "cilium_policy_"
+	MapName    = "cilium_policy_"
+	MaxEntries = 16384
 )
 
 var (
